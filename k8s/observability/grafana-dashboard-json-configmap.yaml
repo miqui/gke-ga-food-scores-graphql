@@ -1285,7 +1285,7 @@ data:
           "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [
-            { "expr": "sum(increase(sync_upserts_total[7d]))", "refId": "A" }
+            { "expr": "sum(increase(facilities_upserted_total[7d]))", "refId": "A" }
           ]
         },
         {
@@ -1316,7 +1316,7 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [
-            { "expr": "sum by (entity) (sync_upserts_total)", "legendFormat": "{{entity}}", "refId": "A" }
+            { "expr": "sum by (county) (facilities_upserted_total)", "legendFormat": "{{county}}", "refId": "A" }
           ]
         },
         {

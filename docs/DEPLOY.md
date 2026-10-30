@@ -84,6 +84,6 @@ Then set the repository variables `GCP_WIF_PROVIDER`
 - Image entrypoint `node dist/index.js`; CronJob command `node dist/ingest.js`; migrations by
   `node_modules/.bin/prisma migrate deploy` in the PreSync hook.
 - Telemetry: OTLP/HTTP to `http://otel-collector.observability.svc.cluster.local:4318`
-  (`OTEL_METRICS_URL`, `OTEL_TRACES_URL`). Sync metrics: `sync_runs_total{status}`,
-  `sync_last_success_timestamp_seconds`, `sync_duration_seconds` (histogram),
-  `sync_upserts_total{entity}`.
+  (`OTEL_METRICS_URL`, `OTEL_TRACES_URL`). Sync metrics: `sync_runs_total{county,status}`,
+  `sync_last_success_timestamp_seconds{county}`, `sync_duration_seconds` (histogram),
+  `facilities_upserted_total{county}`.
