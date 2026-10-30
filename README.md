@@ -11,3 +11,7 @@ Status: work in progress
 - Production checklist (TBD)
 
 See [PROVENANCE.md](PROVENANCE.md) for origins.
+
+## Deploying to GKE
+
+See [docs/DEPLOY.md](docs/DEPLOY.md). One cluster at a time: tear down the previous stack first (`./gke-teardown.sh`), then `gke-deploy.sh` -> `gke-secrets-seed.sh` -> `gke-bootstrap.sh`.

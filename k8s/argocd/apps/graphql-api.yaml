@@ -1,0 +1,42 @@
+# ArgoCD Application syncing k8s/ - food-service, the food-sync CronJob and everything they need in
+# `default`: the PostgresInstance (one Cloud SQL instance with the fooddb database + food_app user,
+# via the platform's Crossplane Composition) + postgres-exporter, the ExternalSecret for the DB
+# password, the PreSync migrate Job, the Deployment/Service/HPA/PDB, the public Gateway
+# (graphql.miqui.dev) and the namespace's NetworkPolicies and ResourceQuota - everything
+# k8s/kustomization.yaml
+# produces. Last wave: it needs the policies, the secret store and the PostgresInstance API to
+# exist first.
+#
+# Which image tag the service runs is decided by Argo CD Image Updater (see
+# k8s/argocd/image-updater/), which writes them into spec.source.kustomize of this Application -
+# the root Application ignores that field so it doesn't revert the update.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: graphql-api
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/miqui/gke-ga-food-scores-graphql.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Gateway-API and networking.gke.io policy kinds, plus the XR, are served by CRDs that
+      # (for the XR) are created in an earlier wave; the dry run can be ahead of discovery.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

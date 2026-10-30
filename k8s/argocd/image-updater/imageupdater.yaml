@@ -1,0 +1,31 @@
+# Argo CD Image Updater (v1.x) config: watches the Artifact Registry repo CI pushes the image to
+# and, on a new tag, patches the graphql-api Application's Kustomize image overrides directly (the
+# default "argocd" write-back method) - no git commits, so neither CI nor Image Updater ever needs
+# push access to this repo. Registry credentials are the Workload Identity token script configured
+# in k8s/argocd/image-updater-values.yaml (matched by the us-central1-docker.pkg.dev prefix).
+#
+# Tag scheme + strategy: CI tags each image <UTC yyyymmddHHMMSS>-<7-char sha> (e.g.
+# 20260918140501-a1b2c3d) and the "alphabetical" strategy picks the highest one, i.e. the newest
+# build - no per-tag manifest fetches (which "newest-build" needs to read creation dates).
+# allowTags excludes the floating :latest tag CI also pushes.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: graphql-api
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: graphql-api
+      commonUpdateSettings:
+        updateStrategy: alphabetical
+        allowTags: "regexp:^[0-9]{14}-[0-9a-f]{7}$"
+      images:
+        # manifestTargets.kustomize.name is the image name as written in the Deployment specs
+        # (k8s/kustomization.yaml renames it to the registry name) - the override is applied
+        # like `kustomize edit set image food-service=<registry>/food-service:<tag>`. The same
+        # override retags the Deployment, the PreSync migrate Job and the food-sync CronJob.
+        - alias: food-service
+          imageName: us-central1-docker.pkg.dev/k8s-dev-412419/graphql-apollo-prisma-o2/food-service
+          manifestTargets:
+            kustomize:
+              name: food-service

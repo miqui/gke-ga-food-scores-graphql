@@ -1,0 +1,81 @@
+# Daily ingest of Georgia DPH inspection data. Same image as food-service (kustomization.yaml maps
+# the `food-service` image name to the Artifact Registry path), but `command` overrides the image
+# ENTRYPOINT so this pod runs the sync CLI (dist/ingest.js) and never starts the HTTP server.
+# Counties come from the food-sync-config ConfigMap (SYNC_COUNTIES, k8s/configmap.yaml).
+# Manual run: kubectl create job --from=cronjob/food-sync food-sync-manual-1
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: food-sync
+  labels:
+    app: food-sync
+spec:
+  schedule: "0 3 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: food-sync
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: food-sync
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: food-sync
+              image: food-service:latest
+              imagePullPolicy: IfNotPresent
+              command: ["node", "dist/ingest.js"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              envFrom:
+                - configMapRef:
+                    name: food-service-config
+                - configMapRef:
+                    name: food-sync-config
+              env:
+                - name: DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudsql-connection
+                      key: privateIP
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: food-service-db-credentials
+                      key: DB_USER
+                - name: DB_PASSWORD_URLENC
+                  valueFrom:
+                    secretKeyRef:
+                      name: food-service-db-credentials
+                      key: DB_PASSWORD_URLENC
+                - name: DATABASE_URL
+                  value: "postgresql://$(DB_USER):$(DB_PASSWORD_URLENC)@$(DB_HOST):5432/fooddb?sslmode=require"
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"

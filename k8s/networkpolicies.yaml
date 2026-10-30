@@ -1,0 +1,173 @@
+# NetworkPolicies for `default` (enforced by GKE Dataplane V2 - see gke-deploy.sh). Default deny
+# in both directions, then one policy per workload listing exactly the flows it needs. Not
+# affected: kubelet probes (node-local) and `kubectl port-forward` (enters the pod's own network
+# namespace), so neither needs a rule.
+#
+# Two addresses come from gke-deploy.sh and must stay in sync with it:
+#   10.16.0.0/20                      Private Service Access range = where Cloud SQL's IP lives
+#   35.191.0.0/16, 130.211.0.0/22     Google Front End / health-check ranges the Gateway's load
+#                                     balancer connects to pods from (container-native LB)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # GKE runs NodeLocal DNSCache: on Dataplane V2, lookups sent to the kube-dns Service are
+    # redirected to the node-local-dns pod on the same node (an ordinary pod, k8s-app:
+    # node-local-dns), which falls back to kube-dns. Allowing only kube-dns makes every lookup
+    # time out - verified live.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: food-service
+spec:
+  podSelector:
+    matchLabels:
+      app: food-service
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only the Gateway's load balancer (requests and its health checks, both on 8080). Nothing
+    # in-cluster calls the API, and Prometheus gets its metrics from the OTel Collector, not the
+    # pods.
+    - from:
+        - ipBlock:
+            cidr: 35.191.0.0/16
+        - ipBlock:
+            cidr: 130.211.0.0/22
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.16.0.0/20
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+---
+# food-sync (CronJob pods): Cloud SQL, OTLP metrics/traces, and the public Georgia DPH inspection
+# portal over HTTPS. The portal has no fixed IP range, so egress is 443 to anywhere outside the
+# private ranges. DNS: allow-dns-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: food-sync
+spec:
+  podSelector:
+    matchLabels:
+      app: food-sync
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.16.0.0/20
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4318
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# food-migrate (PreSync hook Job): only Cloud SQL. The Prisma CLI needs no internet
+# (CHECKPOINT_DISABLE=1 and the engines are baked into the image).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: food-migrate
+spec:
+  podSelector:
+    matchLabels:
+      app: food-migrate
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.16.0.0/20
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-exporter
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-exporter
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.16.0.0/20
+      ports:
+        - protocol: TCP
+          port: 5432

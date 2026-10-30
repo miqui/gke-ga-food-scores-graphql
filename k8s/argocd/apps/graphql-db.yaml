@@ -1,0 +1,34 @@
+# ArgoCD Application for the database prerequisites in k8s/db/: the ExternalSecret that builds the
+# DB credentials from Secret Manager, and the PostgresInstance (Cloud SQL via the platform
+# Composition). Wave 1, one before graphql-api (wave 2): graphql-api's PreSync migrate hook needs
+# both the credentials Secret and the Crossplane-written cloudsql-connection Secret, and a PreSync
+# hook runs before anything else in its own Application. Cloud SQL takes ~10-15 min to provision;
+# the hook's wait-for-postgres init container waits for it (hook deadline 45 min).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: graphql-db
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/miqui/gke-ga-food-scores-graphql.git
+    targetRevision: main
+    path: k8s/db
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

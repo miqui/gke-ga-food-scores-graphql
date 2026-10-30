@@ -1,0 +1,118 @@
+# Schema migrations, run once per Argo CD sync BEFORE the new Deployment rolls out (PreSync hook),
+# so 3 replicas never race each other to migrate. BeforeHookCreation deletes the previous run's
+# Job just before creating the next one. The pod has its own NetworkPolicy (networkpolicies.yaml:
+# food-migrate).
+#
+# Uses the same image as food-service; the Prisma CLI must therefore be a production dependency
+# of the app (it is installed by `npm ci --omit=dev` in the Dockerfile).
+#
+# It needs the credentials Secret and cloudsql-connection, which the separate graphql-db
+# Application (k8s/db/, one sync wave earlier) creates; a PreSync hook can't wait for resources in
+# its own Application's main sync. The init container below waits for Cloud SQL itself.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: food-migrate
+  labels:
+    app: food-migrate
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 2700
+  template:
+    metadata:
+      labels:
+        app: food-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: cloudsql-connection
+                  key: privateIP
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_PASSWORD
+            - name: PGSSLMODE
+              value: require
+            - name: PGCONNECT_TIMEOUT
+              value: "3"
+          command:
+            - sh
+            - -c
+            - |
+              # Log in to fooddb as food_app, not just pg_isready: Cloud SQL accepts connections
+              # minutes before Crossplane has created the database and user.
+              export PGPASSWORD="$DB_PASSWORD"
+              until psql -h "$DB_HOST" -p 5432 -U "$DB_USER" -d fooddb -tAc 'SELECT 1' >/dev/null 2>&1; do
+                echo "Waiting for database fooddb on Cloud SQL at $DB_HOST:5432..."
+                sleep 2
+              done
+      containers:
+        - name: migrate
+          image: food-service:latest
+          imagePullPolicy: IfNotPresent
+          # Replace with ["node","dist/migrate.js"] if the app ships a migrate entry point.
+          command: ["node_modules/.bin/prisma", "migrate", "deploy"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Not food-service-config: that ConfigMap is created by the main sync, after this hook.
+          env:
+            - name: CHECKPOINT_DISABLE
+              value: "1"
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: cloudsql-connection
+                  key: privateIP
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD_URLENC
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_PASSWORD_URLENC
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASSWORD_URLENC)@$(DB_HOST):5432/fooddb?sslmode=require"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

@@ -1,0 +1,23 @@
+# The service's database server, requested through the platform's PostgresInstance API
+# (k8s/platform/postgres-xrd.yaml). The Composition provides it as one private-IP-only Cloud SQL
+# for PostgreSQL instance with a database and login user, and writes the connection details
+# (privateIP, connectionName, server CA) to the cloudsql-connection Secret that food-service, the
+# migrate hook and food-sync read. First provisioning takes ~10-15 minutes;
+# `kubectl get postgresinstance` shows progress. Disk: 20 GB SSD with auto-resize; no backups/PITR.
+#
+# The user's password comes from the ExternalSecret (external-secret.yaml, same directory); the
+# user name must match the DB_USER templated there.
+apiVersion: platform.miqui.dev/v1alpha1
+kind: PostgresInstance
+metadata:
+  name: graphqldb
+  labels:
+    app: postgres
+spec:
+  databases:
+    - name: fooddb
+      userName: food_app
+      passwordSecretRef:
+        name: food-service-db-credentials
+        key: DB_PASSWORD
+  connectionSecretName: cloudsql-connection
