@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+# Data
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.csv
