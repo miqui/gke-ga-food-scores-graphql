@@ -3,7 +3,8 @@
 // Portal identifiers are stored as unique string natural keys (`portalId`); the integer `id`
 // is a surrogate key used for relations.
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["metrics"] // prisma.$metrics: pool stats exported by src/telemetry.ts
 }
 
 datasource db {
