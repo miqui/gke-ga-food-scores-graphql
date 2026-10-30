@@ -1,0 +1,16 @@
+# betterleaks / gitleaks-format config. Extends the default rules and allowlists only the
+# documented throwaway development credentials (docker compose Postgres and the CI service
+# container); nothing here is a real secret.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway local-dev and CI Postgres credentials"
+regexTarget = "line"
+regexes = [
+  '''gafood:gafood@''',
+  '''POSTGRES_PASSWORD: ?(gafood|ci-only-password)''',
+  '''POSTGRES_USER: ?gafood''',
+  '''food_app:ci-only-password@''',
+  '''op://[a-z-]+/''',
+]
