@@ -1,0 +1,35 @@
+[
+  {
+    "printablePath": "../../_templates/87/food_2015/_report_full.cfm?fsimID=57539364&rtype=food_2015&&reportIDParent=0&userID=0&SubType=&dsn=DHD_87&domainid=87",
+    "inspectionId": 57539364,
+    "facilityId": "MTI5Nzg5Mzc=",
+    "columns": {
+      "0": "Date: 07-08-2026",
+      "1": "Inspection Purpose: Routine",
+      "2": "Score: 100",
+      "3": "Inspector: Timmy Brinkley"
+    },
+    "violations": {}
+  },
+  {
+    "printablePath": "../../_templates/87/food_2015/_report_full.cfm?fsimID=57377397&rtype=food_2015&&reportIDParent=0&userID=0&SubType=&dsn=DHD_87&domainid=87",
+    "inspectionId": 57377397,
+    "facilityId": "MTI5Nzg5Mzc=",
+    "columns": {
+      "0": "Date: 11-06-2023",
+      "1": "Inspection Purpose: Routine",
+      "2": "Score: 94",
+      "3": "Inspector: Timmy Brinkley"
+    },
+    "violations": {
+      "0": [
+        "1-2B - certified food protection manager",
+        "511-6-1.03(3)(a) - food safety manager certification (pf)",
+        "Points: 4",
+        "Corrected during inspection?: No",
+        "Repeat: Yes",
+        "Inspector Notes: PIC does not have his CFSM certification. This is a repeat from last inspection. CA: I have provided the PIC with a copy of the serv safe Food safety manager dates flyer. PIC will be given 30 days to acquire certification.\r\n\r\n511-6-1.03(3)(a) - Food Safety Manager Certification (Pf)\r\nFood service establishments shall have in its employ a Certified Food Safety Manager (CFSM) as specified in paragraph (b) of this subsection to ensure food safety is being managed within the food service establishment during all hours of operation as specified within paragraph (d) of this subsection."
+      ]
+    }
+  }
+]
