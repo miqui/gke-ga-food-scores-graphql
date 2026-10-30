@@ -1,0 +1,13 @@
+.git
+.github
+.scratch*
+node_modules
+dist
+.env*
+k8s
+docs
+*.md
+*.sh
+*.drawio
+Dockerfile
+.dockerignore

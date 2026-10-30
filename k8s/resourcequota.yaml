@@ -1,0 +1,19 @@
+# Sizing check for the single-service layout. Worst case in `default`: food-service at the HPA
+# ceiling of 6 replicas plus one rollout-surge pod (7 x 250m/512Mi requests, 7 x 1000m/1024Mi
+# limits) + postgres-exporter (50m/64Mi req, 200m/128Mi lim) + one food-sync pod and one PreSync
+# migrate pod (each 100m/256Mi req, 500m/512Mi lim) = ~2.0 CPU / 4.0Gi requested and ~8.4 CPU /
+# 8.3Gi limits, plus the 10m/16Mi init containers. That fits the source quota, so it is unchanged
+# (5 CPU / 8Gi requests, 16 CPU / 16Gi limits, 24 pods). At the 3-replica floor it is far lower.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: default-quota
+  namespace: default
+spec:
+  hard:
+    requests.cpu: "5"
+    requests.memory: 8Gi
+    limits.cpu: "16"
+    limits.memory: 16Gi
+    pods: "24"
+    persistentvolumeclaims: "0"

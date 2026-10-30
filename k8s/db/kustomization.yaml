@@ -1,0 +1,10 @@
+# Database prerequisites, synced by their own Argo CD Application (graphql-db, k8s/argocd/apps/
+# graphql-db.yaml) one wave BEFORE graphql-api. They are split out of k8s/ because the PreSync
+# migrate hook in k8s/ runs before anything else in its own Application, and it needs the
+# ExternalSecret-produced credentials and the Crossplane-written cloudsql-connection Secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - external-secret.yaml
+  - postgres-instance.yaml

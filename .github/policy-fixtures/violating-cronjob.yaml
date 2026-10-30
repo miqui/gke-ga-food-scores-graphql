@@ -1,0 +1,27 @@
+# Deliberately non-compliant CronJob (mirrors the shape of k8s/cronjob.yaml). check-policies.sh
+# requires the enforce policies to REJECT this - it proves the policies cover CronJob pod templates
+# (food-sync), not only Deployments. Never applied to a cluster; not referenced by any
+# kustomization.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: policy-check-violating-cronjob
+  namespace: default
+  labels:
+    app: policy-check-violating-cronjob
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: policy-check-violating-cronjob
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: violator
+              image: evil.example.com/policy-check/violator:latest
+              command: ["node", "dist/ingest.js"]
+              securityContext:
+                privileged: true

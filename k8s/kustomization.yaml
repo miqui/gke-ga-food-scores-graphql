@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - resourcequota.yaml
+  - networkpolicies.yaml
+  - configmap.yaml
+  - postgres-exporter.yaml
+  - deployment.yaml
+  - hpa.yaml
+  - service.yaml
+  - pdb.yaml
+  - migrate-job.yaml
+  - cronjob.yaml
+  - gateway.yaml
+
+# `food-service` is the image name written in deployment.yaml, migrate-job.yaml and cronjob.yaml;
+# it is mapped to the Artifact Registry path here. Argo CD Image Updater overrides newTag.
+images:
+  - name: food-service
+    newName: us-central1-docker.pkg.dev/k8s-dev-412419/graphql-apollo-prisma-o2/food-service
+    newTag: latest

@@ -1,0 +1,35 @@
+# DB_HOST isn't here: it's Cloud SQL's private IP, read from the cloudsql-connection Secret that
+# Crossplane writes for the PostgresInstance (k8s/db/postgres-instance.yaml). DATABASE_URL is assembled from
+# it in the Deployment, the migrate hook and the CronJob.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: food-service-config
+  labels:
+    app: food-service
+data:
+  PORT: "8080"
+  # The Prisma CLI phones checkpoint.prisma.io for update notices; the default-deny egress policy
+  # blocks that, so don't try.
+  CHECKPOINT_DISABLE: "1"
+  OTEL_METRICS_URL: "http://otel-collector.observability.svc.cluster.local:4318/v1/metrics"
+  OTEL_TRACES_URL: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
+  # Sample 10% of new traces (children follow their parent's decision). Raise to 1.0 temporarily
+  # when debugging.
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+  # Introspection + the Apollo Sandbox landing page are off in production unless enabled here.
+  # Fine for this dev cluster, whose API is behind the Cloud Armor allowlist (k8s/gateway.yaml).
+  GRAPHQL_INTROSPECTION: "true"
+---
+# Settings for the food-sync CronJob (k8s/cronjob.yaml). To widen the sync, edit SYNC_COUNTIES
+# (comma-separated county names, upper case) and commit - the next run picks it up. A manual run:
+#   kubectl create job --from=cronjob/food-sync food-sync-manual-1
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: food-sync-config
+  labels:
+    app: food-sync
+data:
+  SYNC_COUNTIES: "LONG,MCINTOSH,LIBERTY"
