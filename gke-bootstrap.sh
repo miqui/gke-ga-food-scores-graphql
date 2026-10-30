@@ -123,6 +123,7 @@ while :; do
   fi
   sleep 30
 done
+# shellcheck disable=SC2001
 echo "$status" | sed 's/^/    /'
 
 # ---- 4. Public endpoint ---------------------------------------------------------------------

@@ -58,6 +58,7 @@ PROJECT_ROLES=(
 SECRETS=(gql-postgres-food-password
          gql-grafana-admin-user gql-grafana-admin-password
          gql-openobserve-root-email gql-openobserve-root-password)
+# shellcheck disable=SC2034  # only referenced in a comment
 WIF_POOL="github"
 
 ASSUME_YES=0
@@ -129,6 +130,7 @@ if gcloud container clusters describe "$CLUSTER" --zone="$ZONE" &>/dev/null; the
     log "Deleting PostgresInstances (Crossplane deletes the Cloud SQL instance; ~5 min)"
     if kubectl get crd postgresinstances.platform.miqui.dev >/dev/null 2>&1; then
       kubectl delete postgresinstances --all -A --wait=false || true
+      # shellcheck disable=SC2016
       wait_until 1200 "Cloud SQL managed resources to be deleted" \
         bash -c '[[ -z "$(kubectl get databaseinstances.sql.gcp.m.upbound.io -A --no-headers 2>/dev/null)" ]]' \
         || true

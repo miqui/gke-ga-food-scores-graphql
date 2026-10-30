@@ -21,8 +21,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -30,6 +30,10 @@ jobs:
       # Needs `npm run lint` and `npm run build` (tsc typecheck + emit) in package.json.
       - run: npm run lint
       - run: npm run build
+      - run: npm run schema:check
+      # Informational only: the open findings are in the prisma CLI's config loader (docs/DEPLOY.md).
+      - name: npm audit (non-blocking)
+        run: npm audit --omit=dev || true
 
   test:
     runs-on: ubuntu-latest
@@ -51,8 +55,8 @@ jobs:
       # Throwaway CI database in the service container above; not a real credential.
       DATABASE_URL: postgresql://food_app:ci-only-password@localhost:5432/fooddb?schema=public
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -64,7 +68,7 @@ jobs:
   k8s-validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # kubectl and helm are preinstalled on GitHub's ubuntu runners.
       - name: Render every kustomization
@@ -112,10 +116,10 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       # Build only: never pushes (build-and-push.yml does that, from main).
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ./Dockerfile
@@ -127,10 +131,21 @@ jobs:
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0   # full history for the git scan
-      - uses: dortort/betterleaks-action@v0.1.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          redact: "true"
+      # Release binary pinned by version and SHA-256 (from the release's checksums.txt) instead of
+      # a third-party action.
+      - name: Install betterleaks
+        env:
+          BETTERLEAKS_VERSION: "1.9.0"
+          BETTERLEAKS_SHA256: f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7
+        run: |
+          set -euo pipefail
+          archive="betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/${archive}"
+          echo "${BETTERLEAKS_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" betterleaks
+          sudo install -m 0755 betterleaks /usr/local/bin/betterleaks
+      - name: Scan working tree
+        run: betterleaks dir . --redact

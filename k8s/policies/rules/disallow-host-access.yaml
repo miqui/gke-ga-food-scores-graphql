@@ -21,7 +21,7 @@ spec:
   # ReplicaSet events.
   autogen:
     podControllers:
-      controllers: ["deployments", "statefulsets", "daemonsets"]
+      controllers: ["deployments", "statefulsets", "daemonsets", "jobs", "cronjobs"]
   variables:
     - name: containers
       expression: "object.spec.containers + object.spec.?initContainers.orValue([])"

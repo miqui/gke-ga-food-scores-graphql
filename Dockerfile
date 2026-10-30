@@ -16,6 +16,7 @@
 # `generate` picks the wrong engine and the app fails at runtime with "Unable to require
 # libquery_engine".
 FROM node:24-alpine AS base
+# hadolint ignore=DL3018
 RUN apk add --no-cache openssl
 
 # Stage 1: build (full deps + TypeScript compile)
@@ -29,7 +30,7 @@ COPY package.json package-lock.json prisma.config.t[s] ./
 COPY prisma/ prisma/
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src/ src/
 RUN npm run build
 
@@ -53,7 +54,7 @@ COPY --chown=node:node prisma/ prisma/
 COPY --chown=node:node --from=builder /workspace/dist ./dist
 
 # The built-in non-root user (uid 1000). The Kubernetes manifests also set runAsUser: 1000.
-USER node
+USER 1000:1000
 EXPOSE 8080
 
 # Server only. `exec` form: node is PID 1 and receives SIGTERM for graceful shutdown.
