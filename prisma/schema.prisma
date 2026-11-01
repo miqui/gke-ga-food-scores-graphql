@@ -1,0 +1,117 @@
+// Prisma schema for the Georgia food-inspection GraphQL API (PostgreSQL 16).
+// Translated from the Drizzle/SQLite schema of miqui/ga-food-scores (no users table, no auth).
+// Portal identifiers are stored as unique string natural keys (`portalId`); the integer `id`
+// is a surrogate key used for relations.
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["metrics"] // prisma.$metrics: pool stats exported by src/telemetry.ts
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Facility {
+  id                  Int          @id @default(autoincrement())
+  portalId            String       @unique @map("portal_id") // stable portal facilityId (base64)
+  name                String
+  address             String
+  city                String       @default("")
+  county              String
+  permitType          String       @map("permit_type")
+  permitNumber        String       @default("") @map("permit_number")
+  phone               String       @default("")
+  lastInspectionScore Int?         @map("last_inspection_score")
+  lastInspectionDate  DateTime?    @map("last_inspection_date") @db.Date
+  // The stored history doesn't yet include lastInspectionDate; sync retries it.
+  historyPending      Boolean      @default(false) @map("history_pending")
+  updatedAt           DateTime     @map("updated_at") @db.Timestamptz(3)
+  inspections         Inspection[]
+
+  @@index([county])
+  @@index([city])
+  @@index([lastInspectionScore])
+  @@index([name])
+  @@map("facilities")
+}
+
+model Inspection {
+  id             Int         @id @default(autoincrement())
+  portalId       String      @unique @map("portal_id") // portal inspectionId
+  facilityId     Int         @map("facility_id")
+  facility       Facility    @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  inspectionDate DateTime    @map("inspection_date") @db.Date
+  purpose        String      @default("")
+  score          Int?
+  inspector      String      @default("")
+  reportUrl      String      @default("") @map("report_url")
+  violations     Violation[]
+
+  @@index([facilityId])
+  @@index([inspectionDate])
+  @@map("inspections")
+}
+
+model Violation {
+  id              Int        @id @default(autoincrement())
+  inspectionId    Int        @map("inspection_id")
+  inspection      Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  code            String
+  ruleCitation    String     @default("") @map("rule_citation")
+  points          Int        @default(0)
+  correctedOnSite Boolean    @default(false) @map("corrected_on_site")
+  repeat          Boolean    @default(false)
+  notes           String     @default("")
+
+  @@index([inspectionId])
+  @@map("violations")
+}
+
+// Per-county ingest watermark + checkpoint of an unfinished walk.
+model SyncState {
+  county       String    @id
+  // Most recent inspection date seen for the county.
+  watermark    DateTime? @db.Date
+  lastSyncedAt DateTime? @map("last_synced_at") @db.Timestamptz(3)
+  // Checkpoint of an unfinished walk: next page to fetch and newest date seen so far.
+  // Both null once a walk completes.
+  resumePage   Int?      @map("resume_page")
+  resumeNewest DateTime? @map("resume_newest") @db.Date
+
+  @@map("sync_state")
+}
+
+enum SyncRunStatus {
+  running
+  ok
+  failed
+  interrupted
+}
+
+// One row per county per sync run.
+model SyncRun {
+  id         Int           @id @default(autoincrement())
+  county     String
+  owner      String
+  startedAt  DateTime      @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime?     @map("finished_at") @db.Timestamptz(3)
+  status     SyncRunStatus
+  result     Json? // SyncResult when status is ok
+  error      String?
+
+  @@index([startedAt])
+  @@map("sync_runs")
+}
+
+// At most one row (id 1): the process currently syncing, kept fresh by heartbeats.
+// A heartbeat older than LOCK_STALE_MS means the holder died and the lock can be taken over.
+model SyncLock {
+  id          Int      @id
+  owner       String
+  counties    Json // string[]
+  acquiredAt  DateTime @map("acquired_at") @db.Timestamptz(3)
+  heartbeatAt DateTime @map("heartbeat_at") @db.Timestamptz(3)
+
+  @@map("sync_lock")
+}

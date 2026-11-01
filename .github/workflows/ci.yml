@@ -1,0 +1,151 @@
+name: CI
+
+# Pull-request and main checks. Job names are stable (branch protection requires them):
+#   lint, test, k8s-validate, docker-build, secrets-scan
+# Publishing the image is a separate workflow (build-and-push.yml, main only).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+      - run: npm ci
+      # Needs `npm run lint` and `npm run build` (tsc typecheck + emit) in package.json.
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run schema:check
+      # Informational only: the open findings are in the prisma CLI's config loader (docs/DEPLOY.md).
+      - name: npm audit (non-blocking)
+        run: npm audit --omit=dev || true
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: food_app
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: fooddb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U food_app -d fooddb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway CI database in the service container above; not a real credential.
+      DATABASE_URL: postgresql://food_app:ci-only-password@localhost:5432/fooddb?schema=public
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm test
+
+  k8s-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # kubectl and helm are preinstalled on GitHub's ubuntu runners.
+      - name: Render every kustomization
+        run: |
+          set -euo pipefail
+          mkdir -p rendered
+          for dir in k8s k8s/db k8s/observability k8s/policies/overlays/enforce-default k8s/policies/overlays/audit-other k8s/policies/audit-only k8s/policies/exceptions; do
+            echo "== kustomize build ${dir}"
+            kubectl kustomize "${dir}" > "rendered/$(echo "${dir}" | tr / _).yaml"
+          done
+
+      # CRD kinds (ExternalSecret, PostgresInstance, Gateway API, Kyverno, ...) have no built-in
+      # schema, so they are skipped; core kinds (Deployment, CronJob, Job, NetworkPolicy, ...) are
+      # validated strictly.
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: kubeconform
+        run: kubeconform -strict -ignore-missing-schemas -summary rendered/k8s.yaml rendered/k8s_observability.yaml
+
+      # Same version as the cluster (policy-check.yml); SHA-256 from the release's checksums.txt.
+      - name: Install Kyverno CLI
+        env:
+          KYVERNO_VERSION: v1.19.1
+          KYVERNO_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
+        run: |
+          set -euo pipefail
+          archive="kyverno-cli_${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_VERSION}/${archive}"
+          echo "${KYVERNO_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" kyverno
+          sudo install -m 0755 kyverno /usr/local/bin/kyverno
+
+      # The enforce policies vs k8s/ (Deployment, CronJob, hook Job all included), plus the
+      # self-tests that the violating Deployment and CronJob fixtures are rejected.
+      - name: Kyverno policy check
+        run: ./check-policies.sh
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      # Build only: never pushes (build-and-push.yml does that, from main).
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=food-service
+          cache-to: type=gha,mode=max,scope=food-service
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0   # full history for the git scan
+      # Release binary pinned by version and SHA-256 (from the release's checksums.txt) instead of
+      # a third-party action.
+      - name: Install betterleaks
+        env:
+          BETTERLEAKS_VERSION: "1.9.0"
+          BETTERLEAKS_SHA256: f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7
+        run: |
+          set -euo pipefail
+          archive="betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/${archive}"
+          echo "${BETTERLEAKS_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" betterleaks
+          sudo install -m 0755 betterleaks /usr/local/bin/betterleaks
+      - name: Scan working tree
+        run: betterleaks dir . --redact

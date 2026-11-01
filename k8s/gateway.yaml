@@ -1,0 +1,127 @@
+# Public entry point: https://graphql.miqui.dev through a GKE-managed global external Application
+# Load Balancer (Gateway API, gatewayClass gke-l7-global-external-managed).
+#
+#   /*  -> food-service
+#
+# The only thing in the cluster reachable from the internet; every tool is port-forward only.
+# TLS ends at the load balancer, which forwards plain HTTP/1.1 to the pods' port 8080.
+#
+# Everything the Gateway points at by name is created by gke-deploy.sh outside the cluster, so it
+# survives rebuilds and never lives in git:
+#   graphql-ip         global static IP (the Cloudflare A record points here)
+#   graphql-cert-map   Certificate Manager map -> Google-managed cert for graphql.miqui.dev
+#   graphql-tls        SSL policy: MODERN profile, TLS 1.2 minimum
+#   graphql-allowlist  Cloud Armor policy: allow API_ALLOWED_CIDRS (default: the operator's IP),
+#                      deny the rest with 403 - see the GCPBackendPolicy below
+#
+# The API has no authentication, so the Cloud Armor allowlist is the only thing keeping the
+# internet out.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: graphql
+  annotations:
+    networking.gke.io/certmap: graphql-cert-map
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  addresses:
+    - type: NamedAddress
+      value: graphql-ip
+  listeners:
+    # TLS for this listener comes from the cert map annotation above, so it has no `tls` block.
+    - name: https
+      protocol: HTTPS
+      port: 443
+    # Only redirects to https (the http-to-https HTTPRoute below).
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: graphql
+spec:
+  parentRefs:
+    - name: graphql
+      sectionName: https
+  hostnames:
+    - graphql.miqui.dev
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: food-service
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+spec:
+  parentRefs:
+    - name: graphql
+      sectionName: http
+  hostnames:
+    - graphql.miqui.dev
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# The load balancer's own health checks (separate from the kubelet probes): the readiness
+# endpoint, so a pod that is draining drops out of the LB too, not just out of the Service.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: food-service
+  labels:
+    app: food-service
+spec:
+  default:
+    checkIntervalSec: 5
+    timeoutSec: 3
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /health/readiness
+  targetRef:
+    group: ""
+    kind: Service
+    name: food-service
+---
+apiVersion: networking.gke.io/v1
+kind: GCPGatewayPolicy
+metadata:
+  name: graphql
+spec:
+  default:
+    sslPolicy: graphql-tls
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: graphql
+---
+# Cloud Armor on the API's backend service: only the source ranges in the graphql-allowlist policy
+# (gke-deploy.sh, section 10) reach the pods; everyone else gets a 403 from the load balancer.
+# The load balancer's own health checks are not subject to Cloud Armor.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: food-service
+  labels:
+    app: food-service
+spec:
+  default:
+    securityPolicy: graphql-allowlist
+  targetRef:
+    group: ""
+    kind: Service
+    name: food-service

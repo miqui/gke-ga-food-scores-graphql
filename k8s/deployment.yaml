@@ -1,0 +1,126 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: food-service
+  labels:
+    app: food-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: food-service
+  template:
+    metadata:
+      labels:
+        app: food-service
+    spec:
+      securityContext:
+        # runAsUser is set explicitly, not just runAsNonRoot: the image's `USER node` is a name,
+        # not a number, so the kubelet can't verify it's non-root on its own. 1000 is node's uid.
+        # The container-level securityContexts below (no privilege escalation, no capabilities)
+        # are what the Kyverno policies in k8s/policies/ require.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: food-service
+          image: food-service:latest
+          imagePullPolicy: IfNotPresent
+          # The image ENTRYPOINT is `node dist/index.js` (server only). Schema migrations are not
+          # run here: the PreSync hook Job (k8s/migrate-job.yaml) applies them once per sync.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: food-service-config
+          env:
+            # DATABASE_URL is composed here because the host only exists in the Crossplane-written
+            # cloudsql-connection Secret (privateIP). $(VAR) expansion only sees variables defined
+            # EARLIER in this list, so keep the order. The password is percent-encoded by the
+            # ExternalSecret (k8s/db/external-secret.yaml). Same block in migrate-job.yaml and
+            # cronjob.yaml.
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: cloudsql-connection
+                  key: privateIP
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD_URLENC
+              valueFrom:
+                secretKeyRef:
+                  name: food-service-db-credentials
+                  key: DB_PASSWORD_URLENC
+            # Cloud SQL is ENCRYPTED_ONLY: sslmode=require = encrypted, server identity not
+            # verified (the server CA is in cloudsql-connection for verify-ca later).
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASSWORD_URLENC)@$(DB_HOST):5432/fooddb?sslmode=require"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1024Mi"
+          startupProbe:
+            httpGet:
+              path: /health/liveness
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          # Shutdown: the pod leaves the Service endpoints as soon as it is Terminating, but the
+          # Gateway's load balancer takes a few seconds to notice. Keep serving through that window,
+          # then SIGTERM runs the app's graceful shutdown. 10s + shutdown < 30s.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
+      # Spread replicas: hostname spread handles single-node loss; zone spread puts the 3 replicas
+      # in us-central1-a/b/c (the node pool spans all three, gke-deploy.sh NODE_ZONES), so losing
+      # a zone leaves two serving. ScheduleAnyway, not DoNotSchedule: during a zone outage the dead
+      # zone's NotReady nodes still count as a domain, and a hard constraint would block the
+      # replacement pod from the surviving zones. Voluntary disruptions: k8s/pdb.yaml.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: food-service
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: food-service

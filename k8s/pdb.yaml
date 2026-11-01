@@ -1,0 +1,18 @@
+# Keep at least 2 of food-service's replicas serving through voluntary disruptions: node drains for
+# GKE upgrades, cluster-autoscaler scale-downs and zone rebalancing. With the HPA floor of 3
+# (k8s/hpa.yaml) one pod can be evicted at a time, so drains never stall. Involuntary loss (a zone
+# outage) isn't governed by a PDB; the zone topology spread in the Deployment covers that.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: food-service
+  labels:
+    app: food-service
+spec:
+  minAvailable: 2
+  # Evict pods that never became Ready even when the budget is exhausted, so a broken rollout
+  # can't wedge a node drain.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app: food-service

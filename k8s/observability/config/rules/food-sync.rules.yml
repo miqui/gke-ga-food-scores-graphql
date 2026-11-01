@@ -1,0 +1,34 @@
+groups:
+  - name: food-sync
+    rules:
+      # sync_last_success_timestamp_seconds is a gauge pushed over OTLP by dist/ingest.js (unix
+      # seconds of the last fully successful run). The OTel Collector's Prometheus exporter keeps
+      # a series for metric_expiration (48h, config/otel-collector.yaml) after the last push, so a
+      # daily job stays visible between runs. Fires when the newest success anywhere is older than
+      # 36h, or when no such series exists at all (never succeeded / expired).
+      - alert: FoodSyncStale
+        expr: |
+          (time() - max(sync_last_success_timestamp_seconds) > 36 * 3600)
+          or
+          absent(sync_last_success_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: warning
+          service: food-sync
+        annotations:
+          summary: "food-sync has not succeeded in 36h"
+          description: "No sync_last_success_timestamp_seconds within the last 36 hours (CronJob runs daily at 03:00 UTC). Check: kubectl get jobs -l app=food-sync; kubectl logs job/<name>."
+
+      # kube-state-metrics (job_name label = the Job's name; manual runs created with
+      # `kubectl create job --from=cronjob/food-sync food-sync-manual-N` match food-sync*).
+      # The series lasts as long as the failed Job object does (failedJobsHistoryLimit: 3 /
+      # ttlSecondsAfterFinished: 7d), so a newer success does not clear it - delete the failed Job.
+      - alert: FoodSyncJobFailed
+        expr: kube_job_status_failed{job_name=~"food-sync.*"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: food-sync
+        annotations:
+          summary: "Job {{ $labels.job_name }} failed"
+          description: "Job {{ $labels.job_name }} in namespace {{ $labels.namespace }} has {{ $value }} failed pod(s). Inspect with kubectl logs job/{{ $labels.job_name }}."
