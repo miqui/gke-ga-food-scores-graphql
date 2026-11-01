@@ -116,6 +116,7 @@ Environment variables read by the app (see [.env.example](.env.example)):
 - `DATABASE_URL` - Postgres connection string. On GKE it is assembled from the Crossplane `cloudsql-connection` secret and the ExternalSecret credentials.
 - `PORT` - HTTP port of the server (8080).
 - `GRAPHQL_INTROSPECTION` - `true`/`false` overrides the default (introspection off when `NODE_ENV=production`); on in the dev cluster, which sits behind the allowlist.
+- `GRAPHQL_SANDBOX` - `true`/`false` (default `false`): serve the embedded Apollo Sandbox at `GET /graphql` for browser testing; needs introspection. On in the dev cluster; open `https://graphql.miqui.dev/graphql` from an allowlisted IP.
 - `OTEL_METRICS_URL` - OTLP/HTTP metrics endpoint for the sync job (falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` + `/v1/metrics`). A failed push never fails the job.
 - `OTEL_TRACES_URL` - OTLP/HTTP traces endpoint for the server; `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` set sampling (10% on GKE).
 - `SYNC_COUNTIES` - comma-separated upper-case county names for the ingest (multi-word allowed, e.g. `BEN HILL`); unset means all 159.

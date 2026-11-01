@@ -2,6 +2,7 @@ import http from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { ApolloServer, type ApolloServerPlugin } from '@apollo/server';
 import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
+import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin/landingPage/default';
 import { expressMiddleware } from '@as-integrations/express5';
 import express, { type ErrorRequestHandler } from 'express';
 import type { PrismaClient } from '@prisma/client';
@@ -21,6 +22,18 @@ export function introspectionFromEnv(env: NodeJS.ProcessEnv = process.env): bool
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new Error(`GRAPHQL_INTROSPECTION must be "true" or "false", got "${env.GRAPHQL_INTROSPECTION}"`);
+}
+
+/**
+ * GRAPHQL_SANDBOX=true|false; default off everywhere. When on, GET /graphql serves the embedded
+ * Apollo Sandbox (it needs introspection, so enable GRAPHQL_INTROSPECTION too). Embedded means the
+ * page runs the requests, so no CORS configuration is needed.
+ */
+export function sandboxFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.GRAPHQL_SANDBOX?.trim().toLowerCase();
+  if (!raw || raw === 'false') return false;
+  if (raw === 'true') return true;
+  throw new Error(`GRAPHQL_SANDBOX must be "true" or "false", got "${env.GRAPHQL_SANDBOX}"`);
 }
 
 type LogFn = (entry: Record<string, unknown>) => void;
@@ -66,6 +79,7 @@ export function requestLogPlugin(log: LogFn): ApolloServerPlugin<Context> {
 export interface ServerOptions {
   prisma: PrismaClient;
   introspection?: boolean;
+  sandbox?: boolean;
   log?: LogFn;
 }
 
@@ -91,7 +105,9 @@ export function createServer(opts: ServerOptions): GraphqlServer {
       metricsPlugin as ApolloServerPlugin<Context>,
       requestLogPlugin(log),
       queryLimitsPlugin as ApolloServerPlugin<Context>,
-      ApolloServerPluginLandingPageDisabled(),
+      (opts.sandbox ?? sandboxFromEnv())
+        ? ApolloServerPluginLandingPageLocalDefault({ embed: true, includeCookies: false })
+        : ApolloServerPluginLandingPageDisabled(),
     ],
     introspection: opts.introspection ?? introspectionFromEnv(),
     includeStacktraceInErrorResponses: false,

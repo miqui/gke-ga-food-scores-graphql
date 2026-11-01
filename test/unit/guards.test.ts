@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Kind, parse, type FragmentDefinitionNode, type OperationDefinitionNode } from 'graphql';
 import { MAX_DEPTH, operationDepth } from '../../src/guards.js';
 import { decodeFacilityCursor, decodeInspectionCursor, encodeCursor, pageSize } from '../../src/pagination.js';
-import { introspectionFromEnv } from '../../src/server.js';
+import { introspectionFromEnv, sandboxFromEnv } from '../../src/server.js';
 import { printedSchema, SNAPSHOT_PATH } from '../../src/print-schema.js';
 import { samplerFromEnv } from '../../src/telemetry.js';
 
@@ -53,6 +53,13 @@ describe('config', () => {
     expect(introspectionFromEnv({ NODE_ENV: 'production', GRAPHQL_INTROSPECTION: 'true' })).toBe(true);
     expect(introspectionFromEnv({ GRAPHQL_INTROSPECTION: 'FALSE' })).toBe(false);
     expect(() => introspectionFromEnv({ GRAPHQL_INTROSPECTION: 'yes' })).toThrow();
+  });
+  it('sandbox is off by default and honours the flag', () => {
+    expect(sandboxFromEnv({})).toBe(false);
+    expect(sandboxFromEnv({ NODE_ENV: 'production' })).toBe(false);
+    expect(sandboxFromEnv({ GRAPHQL_SANDBOX: 'TRUE' })).toBe(true);
+    expect(sandboxFromEnv({ GRAPHQL_SANDBOX: 'false' })).toBe(false);
+    expect(() => sandboxFromEnv({ GRAPHQL_SANDBOX: 'yes' })).toThrow();
   });
   it('builds a sampler from OTEL_TRACES_SAMPLER*', () => {
     expect(samplerFromEnv({}).toString()).toMatch(/ParentBased/);

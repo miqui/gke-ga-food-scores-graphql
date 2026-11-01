@@ -18,9 +18,11 @@ data:
   # when debugging.
   OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
   OTEL_TRACES_SAMPLER_ARG: "0.1"
-  # Introspection + the Apollo Sandbox landing page are off in production unless enabled here.
-  # Fine for this dev cluster, whose API is behind the Cloud Armor allowlist (k8s/gateway.yaml).
+  # Introspection and the embedded Apollo Sandbox (GET /graphql in a browser) are off in production
+  # unless enabled here. Fine for this dev cluster, whose API is behind the Cloud Armor allowlist
+  # (k8s/gateway.yaml).
   GRAPHQL_INTROSPECTION: "true"
+  GRAPHQL_SANDBOX: "true"
 ---
 # Settings for the food-sync CronJob (k8s/cronjob.yaml). To widen the sync, edit SYNC_COUNTIES
 # (comma-separated county names, upper case) and commit - the next run picks it up. A manual run:
