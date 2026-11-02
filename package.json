@@ -20,7 +20,9 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "sync": "tsx src/ingest.ts",
-    "sync:prod": "node dist/ingest.js"
+    "sync:prod": "node dist/ingest.js",
+    "docs:queries": "node k6/render-readme.mjs",
+    "docs:queries:check": "node k6/render-readme.mjs --check"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

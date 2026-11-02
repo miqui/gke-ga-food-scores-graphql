@@ -46,6 +46,550 @@ pagination, nested `inspections` and `violations`), `inspection(id)`, `syncRuns`
 errors: [docs/API.md](docs/API.md); SDL snapshot: [schema.graphql](schema.graphql)
 (`npm run schema:check` keeps it in sync).
 
+## How to use this API
+
+The dev API is `https://graphql.miqui.dev/graphql`. It is read-only (queries only) and only reachable from the
+allowlisted IP (Cloud Armor, see [docs/DEPLOY.md](docs/DEPLOY.md)). Locally it is `http://localhost:8080/graphql`.
+
+**1. Open the Sandbox.** In a browser, open `https://graphql.miqui.dev/graphql`: it serves the embedded Apollo Sandbox
+(`GRAPHQL_SANDBOX=true`), with the schema, docs and autocompletion. Paste any query below into it.
+
+**2. Or use curl.** Every request is a `POST` with a JSON body holding `query` and, optionally, `variables`:
+
+```
+curl -s https://graphql.miqui.dev/graphql \
+  -H 'content-type: application/json' \
+  --data '{"query":"{ facilities(county: \"BRYAN\", first: 2) { totalCount nodes { name city lastInspectionScore } } }"}'
+# {"data":{"facilities":{"totalCount":211,"nodes":[{"name":"...","city":"RICHMOND HILL","lastInspectionScore":100},...]}}}
+
+curl -s https://graphql.miqui.dev/graphql -H 'content-type: application/json' --data '{
+  "query": "query($county: String, $min: Int) { facilities(county: $county, minScore: $min, first: 3) { nodes { name } } }",
+  "variables": { "county": "BRYAN", "min": 95 }
+}'
+```
+
+**3. Know the response shape.** Success is `{"data": ...}`. A resolver or input error is `{"data": null, "errors": [{"message", "extensions": {"code"}}]}`
+(usually HTTP 200, code `BAD_USER_INPUT`). Invalid or too expensive queries get HTTP 400 (`GRAPHQL_VALIDATION_FAILED`,
+`QUERY_TOO_DEEP`, `QUERY_TOO_COMPLEX`). Ids are opaque strings: copy them from a `facilities` result.
+
+**4. Remember the limits.** `first` is 1-100 (default 25), pagination is forward-only with `after`, nesting depth is at most 8,
+query cost at most 10,000 (see [docs/API.md](docs/API.md)).
+
+### Example queries
+
+Each query below is run and checked against the live API by [k6/api-examples.js](k6/api-examples.js), which asserts on the
+results (filters hold, order is newest first, pages are disjoint and complete, errors carry the documented codes). Verify
+them yourself with [k6](https://k6.io/docs/get-started/installation/):
+
+```
+k6 run k6/api-examples.js                                    # against https://graphql.miqui.dev
+k6 run -e BASE_URL=http://localhost:8080 k6/api-examples.js  # against a local server with synced data
+```
+
+The script discovers its own data (a big county, a small one, a facility with several inspections), so it keeps
+working as the data changes; it exits non-zero if any check fails. The section below is generated from
+[k6/catalog.js](k6/catalog.js): edit that file and run `npm run docs:queries` (`npm run docs:queries:check` verifies it).
+
+<!-- queries:start -->
+<!-- Generated from k6/catalog.js by `npm run docs:queries`. Do not edit by hand. -->
+
+49 queries, grouped by task. Values (BRYAN, RICHMOND HILL, ids) come from the dev data set.
+
+<details>
+<summary><b>Getting started</b> (Q1-Q3)</summary>
+
+**Q1. Ping**
+
+The cheapest valid request: the type name of the root.
+
+```graphql
+{ __typename }
+```
+
+**Q2. List the counties**
+
+All 159 Georgia counties, upper case: the exact values the `county` filter accepts.
+
+```graphql
+{ counties }
+```
+
+**Q3. Discover a type with introspection**
+
+What can I ask a `Facility`? (Introspection is on in the dev cluster.)
+
+```graphql
+{ __type(name: "Facility") { name fields { name type { kind name ofType { name } } } } }
+```
+
+</details>
+
+<details>
+<summary><b>Listing facilities</b> (Q4-Q18)</summary>
+
+**Q4. First page of a county**
+
+Newest last inspection first. `totalCount` runs a `COUNT(*)`, so only ask for it when you need it.
+
+```graphql
+{ facilities(county: "BRYAN", first: 5) {
+  totalCount
+  pageInfo { hasNextPage endCursor }
+  nodes { id name city county lastInspectionScore lastInspectionDate }
+} }
+```
+
+**Q5. Edges and cursors**
+
+Use `edges { cursor node { ... } }` when you want a cursor for every row, not just the last one.
+
+```graphql
+{ facilities(county: "BRYAN", first: 3) {
+  edges { cursor node { id name } }
+  pageInfo { startCursor endCursor hasNextPage hasPreviousPage }
+} }
+```
+
+**Q6. Filter by county (case-insensitive)**
+
+`county` is an exact match, ignoring case, so `bryan`, `Bryan` and `BRYAN` are the same.
+
+```graphql
+{ facilities(county: "bryan", first: 3) { totalCount nodes { name county } } }
+```
+
+**Q7. Filter by city**
+
+`city` is an exact match, ignoring case.
+
+```graphql
+{ facilities(city: "richmond hill", first: 3) { totalCount nodes { name city } } }
+```
+
+**Q8. Search by name**
+
+`q` is a case-insensitive substring of the name, address or city (max 100 characters).
+
+```graphql
+{ facilities(county: "BRYAN", q: "pizza", first: 5) { totalCount nodes { name address city lastInspectionScore } } }
+```
+
+**Q9. Search by address**
+
+The same `q` also matches addresses. Addresses are stored with a `\r\n` between street and city.
+
+```graphql
+{ facilities(county: "BRYAN", q: "hwy", first: 5) { totalCount nodes { name address city } } }
+```
+
+**Q10. Only facilities with a perfect score**
+
+`minScore` keeps facilities whose latest score is `>=` the value (0-100). Facilities without a score are excluded.
+
+```graphql
+{ facilities(county: "BRYAN", minScore: 100, first: 5) { totalCount nodes { name lastInspectionScore } } }
+```
+
+**Q11. County plus minimum score**
+
+```graphql
+{ facilities(county: "BRYAN", minScore: 95, first: 5) { totalCount nodes { name county lastInspectionScore } } }
+```
+
+**Q12. Combine every filter**
+
+Filters combine with AND.
+
+```graphql
+{ facilities(city: "RICHMOND HILL", q: "pizza", minScore: 90, first: 5) {
+  totalCount
+  nodes { name address city lastInspectionScore }
+} }
+```
+
+**Q13. Order: newest inspection first**
+
+Results are sorted by `lastInspectionDate` descending; facilities never inspected come last.
+
+```graphql
+{ facilities(county: "BRYAN", first: 10) { nodes { name lastInspectionDate } } }
+```
+
+**Q14. Next page with a cursor**
+
+Pagination is forward-only. Pass the previous page's `pageInfo.endCursor` as `after`.
+
+Request 1:
+
+```graphql
+{ facilities(county: "BRYAN", first: 3) { pageInfo { endCursor } nodes { id name lastInspectionDate } } }
+```
+
+Request 2:
+
+```graphql
+query Next($county: String, $after: String) {
+  facilities(county: $county, first: 3, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id name lastInspectionDate }
+  }
+}
+```
+
+Variables:
+
+```json
+{"county":"BRYAN","after":"<endCursor from the previous page>"}
+```
+
+**Q15. Walk every page of a small county**
+
+Repeat the request while `hasNextPage` is true. The ids collected equal `totalCount`.
+
+```graphql
+query Page($county: String, $after: String) {
+  facilities(county: $county, first: 25, after: $after) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { id }
+  }
+}
+```
+
+Variables:
+
+```json
+{"county":"APPLING","after":null}
+```
+
+Repeat while `pageInfo.hasNextPage` is true, sending `endCursor` back as `after`.
+
+**Q16. Count only**
+
+Selecting only `totalCount` is the cheapest way to size a result set.
+
+```graphql
+{ facilities(county: "BRYAN", minScore: 90) { totalCount } }
+```
+
+**Q17. No matches is an empty page, not an error**
+
+```graphql
+{ facilities(q: "zzz-no-such-place") { totalCount nodes { id } pageInfo { hasNextPage endCursor } } }
+```
+
+**Q18. Facilities whose history is still syncing**
+
+`historyPending` is true while a facility's inspection history has not been fully synced yet.
+
+```graphql
+{ facilities(county: "BRYAN", first: 5) { nodes { name historyPending updatedAt } } }
+```
+
+</details>
+
+<details>
+<summary><b>GraphQL features</b> (Q19-Q24)</summary>
+
+**Q19. Aliases: two counties in one request**
+
+```graphql
+{
+  first: facilities(county: "BRYAN", first: 1) { totalCount nodes { name } }
+  second: facilities(county: "APPLING", first: 1) { totalCount nodes { name } }
+}
+```
+
+**Q20. Fragments**
+
+```graphql
+{
+  facilities(county: "BRYAN", first: 2) { nodes { ...Card } }
+}
+fragment Card on Facility { name city lastInspectionScore lastInspectionDate }
+```
+
+**Q21. Variables with default values**
+
+```graphql
+query Browse($county: String = "BRYAN", $n: Int = 3) {
+  facilities(county: $county, first: $n) { nodes { name } }
+}
+```
+
+**Q22. @include and @skip**
+
+```graphql
+query Card($full: Boolean!) {
+  facilities(county: "BRYAN", first: 2) {
+    nodes { name address @include(if: $full) phone @skip(if: $full) }
+  }
+}
+```
+
+Variables:
+
+```json
+{"full":true}
+```
+
+**Q23. Several operations in one document**
+
+Send `operationName` to pick one; without it the server answers `OPERATION_RESOLUTION_FAILURE` (HTTP 400).
+
+```graphql
+query Names { counties }
+query Ping { __typename }
+```
+
+Send `"operationName": "Ping"`.
+
+**Q24. Several root fields in one round trip**
+
+```graphql
+{
+  counties
+  facility(id: "OTQ5MDk0Mw==") { name }
+  inspection(id: "99524328") { inspectionDate score }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Facility and inspections</b> (Q25-Q30)</summary>
+
+**Q25. One facility by id**
+
+The id is the portal facility id (take it from any `facilities` result). Unknown ids return `null`.
+
+```graphql
+{ facility(id: "OTQ5MDk0Mw==") { id name address city county permitType permitNumber phone lastInspectionScore lastInspectionDate historyPending updatedAt } }
+```
+
+**Q26. A facility with its latest inspections**
+
+```graphql
+{ facility(id: "OTQ5MDk0Mw==") {
+  name
+  inspections(first: 2) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes { id inspectionDate purpose score inspector }
+  }
+} }
+```
+
+**Q27. Page through a facility's inspections**
+
+Inspections are newest first and paginate like facilities.
+
+Request 1:
+
+```graphql
+{ facility(id: "OTQ5MDk0Mw==") { inspections(first: 1) { pageInfo { endCursor } nodes { id inspectionDate } } } }
+```
+
+Request 2:
+
+```graphql
+query More($id: ID!, $after: String) {
+  facility(id: $id) { inspections(first: 1, after: $after) { pageInfo { hasNextPage } nodes { id inspectionDate } } }
+}
+```
+
+Variables:
+
+```json
+{"id":"OTQ5MDk0Mw==","after":"<endCursor from the previous page>"}
+```
+
+**Q28. How many inspections does a facility have?**
+
+```graphql
+{ facility(id: "OTQ5MDk0Mw==") { name inspections(first: 1) { totalCount } } }
+```
+
+**Q29. The deepest allowed query: facility to violation**
+
+Depth 8 is the limit: `facilities > edges > node > inspections > edges > node > violations > code`.
+
+```graphql
+{ facilities(county: "BRYAN", first: 2) {
+  edges { node { name inspections(first: 2) { edges { node { inspectionDate violations { code } } } } } }
+} }
+```
+
+**Q30. Unknown facility returns null**
+
+```graphql
+{ facility(id: "does-not-exist") { id name } }
+```
+
+</details>
+
+<details>
+<summary><b>Inspections and violations</b> (Q31-Q34)</summary>
+
+**Q31. One inspection with its violations**
+
+`violations` is a plain list; `points`, `correctedOnSite` and `repeat` are as reported by the portal. Note the score is not always 100 minus the points.
+
+```graphql
+{ inspection(id: "99524328") {
+  id inspectionDate purpose score inspector reportUrl
+  violations { id code ruleCitation points correctedOnSite repeat notes }
+} }
+```
+
+**Q32. From an inspection back to its facility**
+
+```graphql
+{ inspection(id: "99524328") { score facility { id name city } } }
+```
+
+**Q33. Latest score matches the facility's score**
+
+`lastInspectionScore` on the facility is the score of its newest inspection.
+
+```graphql
+{ facility(id: "OTQ5MDk0Mw==") {
+  lastInspectionScore
+  lastInspectionDate
+  inspections(first: 1) { nodes { score inspectionDate } }
+} }
+```
+
+**Q34. Unknown inspection returns null**
+
+```graphql
+{ inspection(id: "does-not-exist") { id } }
+```
+
+</details>
+
+<details>
+<summary><b>Data freshness (sync)</b> (Q35-Q39)</summary>
+
+**Q35. Most recent sync runs**
+
+One run per county per sync, newest first. `limit` is 1-50.
+
+```graphql
+{ syncRuns(limit: 3) { id county status startedAt finishedAt } }
+```
+
+**Q36. Sync runs of one county**
+
+```graphql
+{ syncRuns(county: "BRYAN", limit: 3) { id county status finishedAt } }
+```
+
+**Q37. Successful runs with their counters**
+
+`result` is JSON: pages walked, facilities seen/upserted, inspections and violations upserted, new watermark.
+
+```graphql
+{ syncRuns(status: ok, limit: 2) { county status result } }
+```
+
+**Q38. Failed or interrupted runs**
+
+`status` is an enum: `running`, `ok`, `failed`, `interrupted`. An empty list is the good answer.
+
+```graphql
+{ failed: syncRuns(status: failed, limit: 5) { county error } interrupted: syncRuns(status: interrupted, limit: 5) { county } }
+```
+
+**Q39. How fresh is the data?**
+
+`running` lists syncs in progress; `lastSuccessAt` is the most recent successful run of any county.
+
+```graphql
+{ syncStatus { lastSuccessAt running { county startedAt } lastRuns(limit: 2) { county status } } }
+```
+
+</details>
+
+<details>
+<summary><b>Errors and limits</b> (Q40-Q49)</summary>
+
+**Q40. Page size 0 is rejected**
+
+`first` must be 1-100. Out-of-range values are rejected (`BAD_USER_INPUT`), not clamped.
+
+```graphql
+{ facilities(first: 0) { totalCount } }
+```
+
+**Q41. Page size 101 is rejected**
+
+```graphql
+{ facilities(first: 101) { totalCount } }
+```
+
+**Q42. Invalid cursor**
+
+```graphql
+{ facilities(after: "not-a-cursor") { totalCount } }
+```
+
+**Q43. Score out of range**
+
+```graphql
+{ facilities(minScore: 150) { totalCount } }
+```
+
+**Q44. Search text too long**
+
+```graphql
+{ facilities(q: "<101 characters>") { totalCount } }
+```
+
+**Q45. Sync run limit out of range**
+
+```graphql
+{ syncRuns(limit: 0) { id } }
+```
+
+**Q46. Unknown field (HTTP 400)**
+
+Validation errors come back with HTTP 400 and `GRAPHQL_VALIDATION_FAILED`.
+
+```graphql
+{ facilities(first: 1) { nodes { nope } } }
+```
+
+**Q47. Too deep (HTTP 400)**
+
+Depth limit 8. This query reaches 11 and is rejected with `QUERY_TOO_DEEP`.
+
+```graphql
+{ facilities(first: 1) { edges { node { inspections(first: 1) { edges { node {
+  facility { inspections(first: 1) { edges { node { id } } } }
+} } } } } } }
+```
+
+**Q48. Too expensive (HTTP 400)**
+
+Cost limit 10,000 (`first` multiplies the cost of everything below it). Rejected with `QUERY_TOO_COMPLEX`; ask for smaller pages.
+
+```graphql
+{ facilities(first: 100) { nodes { inspections(first: 100) { nodes { violations { code points notes } } } } } }
+```
+
+**Q49. There are no mutations**
+
+The API is read-only: any mutation is rejected and returns no data.
+
+```graphql
+mutation { anything }
+```
+
+</details>
+
+<!-- queries:end -->
+
 ## Run manually
 
 Everything below was executed on a Mac with Docker 29 and Node 24. Another Postgres already held
