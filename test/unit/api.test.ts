@@ -249,3 +249,23 @@ describe.skipIf(!hasDb)('GraphQL API introspection on', () => {
     }
   });
 });
+
+describe.skipIf(!hasDb)('GraphQL landing page', () => {
+  const getHtml = async (sandbox: boolean) => {
+    const s = createServer({ prisma: db, introspection: true, sandbox, log: () => {} });
+    const port = await s.start(0);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/graphql`, { headers: { accept: 'text/html' } });
+      return { status: res.status, body: await res.text() };
+    } finally {
+      await s.stop();
+    }
+  };
+  it('serves the embedded Sandbox only when enabled', async () => {
+    const on = await getHtml(true);
+    expect(on.status).toBe(200);
+    expect(on.body).toMatch(/EmbeddedSandbox|embeddable-sandbox/i);
+    const off = await getHtml(false);
+    expect(off.body).not.toMatch(/EmbeddedSandbox|embeddable-sandbox/i);
+  });
+});

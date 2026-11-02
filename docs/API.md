@@ -44,6 +44,8 @@ No Relay global-ID encoding.
 - JSON request body limit 100 kB (413 beyond that).
 - Introspection is off by default in production (`NODE_ENV=production`), on otherwise; override with
   `GRAPHQL_INTROSPECTION=true|false`.
+- Browser testing: with `GRAPHQL_SANDBOX=true` (on in the dev cluster), opening `/graphql` in a browser loads the
+  embedded Apollo Sandbox; paste the examples below into it.
 - Nested data is batched with DataLoader: a page of facilities with inspections and violations costs one SQL statement per level.
 
 ## Examples
@@ -149,7 +151,7 @@ Unexpected server errors are returned as `Internal server error` (details only i
 
 ## Operations
 
-- Env: `DATABASE_URL`, `PORT` (8080), `GRAPHQL_INTROSPECTION`, `OTEL_METRICS_URL`, `OTEL_TRACES_URL`, `OTEL_TRACES_SAMPLER`,
+- Env: `DATABASE_URL`, `PORT` (8080), `GRAPHQL_INTROSPECTION`, `GRAPHQL_SANDBOX`, `OTEL_METRICS_URL`, `OTEL_TRACES_URL`, `OTEL_TRACES_SAMPLER`,
   `OTEL_TRACES_SAMPLER_ARG`, `POD_NAME`. Telemetry is a no-op when the OTEL URLs are unset.
 - Metrics: `graphql_requests_total`, `graphql_errors_total`, `graphql_request_duration_ms` (labels `operation_type`, `root_field`,
   `error_code`; client operation names are deliberately not labels) and `prisma_pool_connections_{open,busy,idle}`,

@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import type { PrismaClient } from '@prisma/client';
 import { Kind, parse, type FragmentDefinitionNode, type OperationDefinitionNode } from 'graphql';
 import { MAX_DEPTH, operationDepth } from '../../src/guards.js';
 import { decodeFacilityCursor, decodeInspectionCursor, encodeCursor, pageSize } from '../../src/pagination.js';
-import { introspectionFromEnv } from '../../src/server.js';
+import { createServer, introspectionFromEnv, sandboxFromEnv } from '../../src/server.js';
 import { printedSchema, SNAPSHOT_PATH } from '../../src/print-schema.js';
 import { samplerFromEnv } from '../../src/telemetry.js';
 
@@ -47,12 +48,49 @@ describe('pagination helpers', () => {
 });
 
 describe('config', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('introspection defaults off in production, on elsewhere, and honours the flag', () => {
     expect(introspectionFromEnv({ NODE_ENV: 'production' })).toBe(false);
     expect(introspectionFromEnv({})).toBe(true);
     expect(introspectionFromEnv({ NODE_ENV: 'production', GRAPHQL_INTROSPECTION: 'true' })).toBe(true);
     expect(introspectionFromEnv({ GRAPHQL_INTROSPECTION: 'FALSE' })).toBe(false);
     expect(() => introspectionFromEnv({ GRAPHQL_INTROSPECTION: 'yes' })).toThrow();
+  });
+  it('sandbox is off by default and honours the flag', () => {
+    expect(sandboxFromEnv({})).toBe(false);
+    expect(sandboxFromEnv({ NODE_ENV: 'production' })).toBe(false);
+    expect(sandboxFromEnv({ GRAPHQL_SANDBOX: 'TRUE' })).toBe(true);
+    expect(sandboxFromEnv({ GRAPHQL_SANDBOX: 'false' })).toBe(false);
+    expect(() => sandboxFromEnv({ GRAPHQL_SANDBOX: 'yes' })).toThrow();
+  });
+  it('rejects Sandbox without effective introspection, including defaults and overrides', () => {
+    const prisma = {} as PrismaClient;
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('GRAPHQL_SANDBOX', 'true');
+    vi.stubEnv('GRAPHQL_INTROSPECTION', '');
+    expect(() => createServer({ prisma })).toThrow(/sandbox requires introspection/i);
+    expect(() => createServer({ prisma, introspection: false })).toThrow(/sandbox requires introspection/i);
+    vi.stubEnv('GRAPHQL_SANDBOX', 'false');
+    vi.stubEnv('GRAPHQL_INTROSPECTION', 'false');
+    expect(() => createServer({ prisma, sandbox: true })).toThrow(/sandbox requires introspection/i);
+    expect(() => createServer({ prisma, sandbox: true, introspection: true })).not.toThrow();
+    expect(() => createServer({ prisma, sandbox: false })).not.toThrow();
+  });
+  it('applies resolved Sandbox and introspection overrides', async () => {
+    vi.stubEnv('GRAPHQL_SANDBOX', 'false');
+    vi.stubEnv('GRAPHQL_INTROSPECTION', 'false');
+    const server = createServer({ prisma: {} as PrismaClient, sandbox: true, introspection: true });
+    try {
+      const port = await server.start(0);
+      const landing = await fetch(`http://127.0.0.1:${port}/graphql`, { headers: { accept: 'text/html' } });
+      expect(await landing.text()).toMatch(/EmbeddedSandbox|embeddable-sandbox/i);
+      const result = await server.apollo.executeOperation({ query: '{ __schema { queryType { name } } }' });
+      expect(result.body.kind).toBe('single');
+      if (result.body.kind === 'single') expect(result.body.singleResult.errors).toBeUndefined();
+    } finally {
+      await server.stop();
+    }
   });
   it('builds a sampler from OTEL_TRACES_SAMPLER*', () => {
     expect(samplerFromEnv({}).toString()).toMatch(/ParentBased/);
