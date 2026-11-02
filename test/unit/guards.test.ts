@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { PrismaClient } from '@prisma/client';
 import { Kind, parse, type FragmentDefinitionNode, type OperationDefinitionNode } from 'graphql';
-import { MAX_DEPTH, operationDepth } from '../../src/guards.js';
+import { isIntrospectionOnly, MAX_DEPTH, operationDepth } from '../../src/guards.js';
 import { decodeFacilityCursor, decodeInspectionCursor, encodeCursor, pageSize } from '../../src/pagination.js';
 import { createServer, introspectionFromEnv, sandboxFromEnv } from '../../src/server.js';
 import { printedSchema, SNAPSHOT_PATH } from '../../src/print-schema.js';
@@ -28,6 +28,17 @@ describe('depth', () => {
     expect(depthOf('query { facility(id: "x") { ...F } } fragment F on Facility { inspections { nodes { id } } }')).toBe(4);
     expect(depthOf('{ __schema { types { fields { type { ofType { ofType { name } } } } } } }')).toBe(0);
     expect(MAX_DEPTH).toBe(8);
+  });
+});
+
+describe('introspection-only detection', () => {
+  const only = (q: string) => isIntrospectionOnly((parse(q).definitions[0] as OperationDefinitionNode).selectionSet);
+  it('is true only when every root field is a __ field', () => {
+    expect(only('{ __schema { queryType { name } } }')).toBe(true);
+    expect(only('{ __schema { types { name } } __type(name: "Query") { name } }')).toBe(true);
+    expect(only('{ __schema { types { name } } counties }')).toBe(false);
+    expect(only('{ counties }')).toBe(false);
+    expect(only('{ ...F } fragment F on Query { __schema { types { name } } }')).toBe(false);
   });
 });
 
