@@ -1,7 +1,7 @@
 # GraphQL API
 
 Read-only GraphQL API over Georgia restaurant inspection data (synced from the state portal into Postgres).
-Endpoint: `POST /graphql` (port 8080). No authentication, no mutations. Schema snapshot: [`schema.graphql`](../schema.graphql)
+Endpoint: `POST /graphql` (port 8080). No authentication, read-only (queries only; mutations and subscriptions are rejected with HTTP 400). Schema snapshot: [`schema.graphql`](../schema.graphql)
 (regenerate with `npm run schema:print`, verified by `npm run schema:check` and a unit test).
 
 Health: `GET /health/liveness` (always 200 while the process runs), `GET /health/readiness` (200 after a DB `SELECT 1`, 503 if the DB
@@ -138,6 +138,10 @@ Too deep (HTTP 400):
 Too costly (HTTP 400; `facilities(first:100){ nodes{ inspections(first:100){ nodes{ violations{...} } } } }`):
 ```json
 {"errors":[{"message":"Query complexity 320201 exceeds the maximum of 10000.","extensions":{"code":"QUERY_TOO_COMPLEX"}}]}
+```
+Mutation or subscription (HTTP 400; the API is read-only, only queries are accepted):
+```json
+{"errors":[{"message":"This API is read-only: mutation operations are not supported, only queries.","extensions":{"code":"OPERATION_NOT_SUPPORTED"}}]}
 ```
 Introspection with the production default (HTTP 400):
 ```json

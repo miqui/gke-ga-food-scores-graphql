@@ -86,6 +86,25 @@ function reject(message: string, code: 'QUERY_TOO_DEEP' | 'QUERY_TOO_COMPLEX'): 
   throw new GraphQLError(message, { extensions: { code, http: { status: 400 } } });
 }
 
+/**
+ * The API is read-only. The schema has no Mutation or Subscription type, so nothing could run
+ * anyway, but graphql-js only discovers that at execution and the error surfaces as a masked
+ * INTERNAL_SERVER_ERROR (HTTP 200). Reject anything but a query up front, with a clear 400.
+ */
+export const readOnlyPlugin: ApolloServerPlugin = {
+  async requestDidStart() {
+    return {
+      async didResolveOperation({ operation }) {
+        if (operation && operation.operation !== 'query') {
+          throw new GraphQLError(`This API is read-only: ${operation.operation} operations are not supported, only queries.`, {
+            extensions: { code: 'OPERATION_NOT_SUPPORTED', http: { status: 400 } },
+          });
+        }
+      },
+    };
+  },
+};
+
 export const queryLimitsPlugin: ApolloServerPlugin = {
   async requestDidStart() {
     return {
