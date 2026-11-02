@@ -96,6 +96,11 @@ export interface GraphqlServer {
 export function createServer(opts: ServerOptions): GraphqlServer {
   const { prisma } = opts;
   const log = opts.log ?? stdoutLog;
+  const sandbox = opts.sandbox ?? sandboxFromEnv();
+  const introspection = opts.introspection ?? introspectionFromEnv();
+  if (sandbox && !introspection) {
+    throw new Error('Apollo Sandbox requires introspection to be enabled');
+  }
   let shuttingDown = false;
 
   const apollo = new ApolloServer<Context>({
@@ -105,11 +110,11 @@ export function createServer(opts: ServerOptions): GraphqlServer {
       metricsPlugin as ApolloServerPlugin<Context>,
       requestLogPlugin(log),
       queryLimitsPlugin as ApolloServerPlugin<Context>,
-      (opts.sandbox ?? sandboxFromEnv())
+      sandbox
         ? ApolloServerPluginLandingPageLocalDefault({ embed: true, includeCookies: false })
         : ApolloServerPluginLandingPageDisabled(),
     ],
-    introspection: opts.introspection ?? introspectionFromEnv(),
+    introspection,
     includeStacktraceInErrorResponses: false,
     maxRecursiveSelections: true,
     formatError: (formatted, error) => {
