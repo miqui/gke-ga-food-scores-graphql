@@ -11,6 +11,12 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_SYNC_RUNS } from './schema.js';
 /** facilities > edges > node > inspections > edges > node > violations > code = 8. */
 export const MAX_DEPTH = 8;
 export const MAX_COMPLEXITY = 10_000;
+/**
+ * Ceiling for operations that only ask for introspection (__schema / __type). Tooling such as
+ * Apollo Sandbox sends the full introspection query, which costs about 50k here; depth ignores
+ * `__*` fields, so this ceiling is what still bounds a hand-crafted, deeply nested one.
+ */
+export const MAX_INTROSPECTION_COMPLEXITY = 100_000;
 const LIST_ESTIMATE = 10; // plain list fields without a size argument (violations)
 
 /** Field nesting depth, following fragments. Introspection (__*) fields are not counted. */
@@ -68,6 +74,14 @@ export const costEstimator: ComplexityEstimator = ({ field, args, childComplexit
   return 1 + childComplexity * multiplier;
 };
 
+/** True when every root field of the operation is an introspection field (`__schema`, `__type`, ...). */
+export function isIntrospectionOnly(selectionSet: SelectionSetNode): boolean {
+  return (
+    selectionSet.selections.length > 0 &&
+    selectionSet.selections.every((s) => s.kind === Kind.FIELD && s.name.value.startsWith('__'))
+  );
+}
+
 function reject(message: string, code: 'QUERY_TOO_DEEP' | 'QUERY_TOO_COMPLEX'): never {
   throw new GraphQLError(message, { extensions: { code, http: { status: 400 } } });
 }
@@ -92,8 +106,9 @@ export const queryLimitsPlugin: ApolloServerPlugin = {
         } catch {
           return; // e.g. uncoercible variables: execution reports the precise error
         }
-        if (complexity > MAX_COMPLEXITY) {
-          reject(`Query complexity ${complexity} exceeds the maximum of ${MAX_COMPLEXITY}.`, 'QUERY_TOO_COMPLEX');
+        const max = isIntrospectionOnly(operation.selectionSet) ? MAX_INTROSPECTION_COMPLEXITY : MAX_COMPLEXITY;
+        if (complexity > max) {
+          reject(`Query complexity ${complexity} exceeds the maximum of ${max}.`, 'QUERY_TOO_COMPLEX');
         }
       },
     };

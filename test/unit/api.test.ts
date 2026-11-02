@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getIntrospectionQuery } from 'graphql';
 import { createServer, type GraphqlServer } from '../../src/server.js';
 import { hasDb, resetDb, testDb } from '../db.js';
 
@@ -244,6 +245,23 @@ describe.skipIf(!hasDb)('GraphQL API introspection on', () => {
         body: JSON.stringify({ query: '{ __schema { queryType { name } } }' }),
       });
       expect(((await res.json()) as any).data.__schema.queryType.name).toBe('Query');
+    } finally {
+      await s.stop();
+    }
+  });
+  it('serves the full introspection query that Apollo Sandbox sends', async () => {
+    const s = createServer({ prisma: db, introspection: true, log: () => {} });
+    const port = await s.start(0);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ operationName: 'IntrospectionQuery', query: getIntrospectionQuery() }),
+      });
+      const body = (await res.json()) as any;
+      expect(res.status).toBe(200);
+      expect(body.errors).toBeUndefined();
+      expect(body.data.__schema.queryType.name).toBe('Query');
     } finally {
       await s.stop();
     }
