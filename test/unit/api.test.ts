@@ -161,6 +161,16 @@ describe.skipIf(!hasDb)('GraphQL API', () => {
     expect((await gql('{ facilities(first: 100) { nodes { id } } }')).body.errors).toBeUndefined();
   });
 
+  it('rejects mutations and subscriptions with 400: the API is read-only', async () => {
+    for (const op of ['mutation { anything }', 'mutation Named { anything }', 'subscription { anything }']) {
+      const rejected = await gql(op);
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.errors[0].extensions.code).toBe('OPERATION_NOT_SUPPORTED');
+      expect(rejected.body.data).toBeUndefined();
+    }
+    // queries still work
+    expect((await gql('{ __typename }')).body.data.__typename).toBe('Query');
+  });
   it('rejects too-deep and too-costly queries with 400', async () => {
     const deep = await gql('{ facilities(first: 1) { edges { node { inspections(first: 1) { edges { node { facility { inspections { edges { node { id } } } } } } } } } } }');
     expect(deep.status).toBe(400);

@@ -6,7 +6,7 @@ import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin
 import { expressMiddleware } from '@as-integrations/express5';
 import express, { type ErrorRequestHandler } from 'express';
 import type { PrismaClient } from '@prisma/client';
-import { queryLimitsPlugin } from './guards.js';
+import { queryLimitsPlugin, readOnlyPlugin } from './guards.js';
 import { createContext, type Context } from './loaders.js';
 import { resolvers } from './resolvers.js';
 import { typeDefs } from './schema.js';
@@ -109,6 +109,7 @@ export function createServer(opts: ServerOptions): GraphqlServer {
     plugins: [
       metricsPlugin as ApolloServerPlugin<Context>,
       requestLogPlugin(log),
+      readOnlyPlugin as ApolloServerPlugin<Context>,
       queryLimitsPlugin as ApolloServerPlugin<Context>,
       sandbox
         ? ApolloServerPluginLandingPageLocalDefault({ embed: true, includeCookies: false })
