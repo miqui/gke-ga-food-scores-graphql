@@ -8,7 +8,8 @@
 //
 // ctx fields (discovered from the live API by k6 `setup()`, see api-examples.js):
 //   county        a county with plenty of facilities       city         its most common city
-//   smallCounty   a county with 1..100 facilities          smallTotal   its facility count
+//   smallCounty   a county with 1..100 facilities (or null)  smallTotal   its facility count
+//   otherCounty   a second county (for aliases)
 //   nameTerm      a word from a facility name              addrTerm     a word from an address
 //   facilityId    a facility with 3+ inspections           inspectionId its latest inspection (has violations)
 
@@ -16,6 +17,7 @@ export const SAMPLE_CTX = {
   county: 'BRYAN',
   city: 'RICHMOND HILL',
   smallCounty: 'APPLING',
+  otherCounty: 'APPLING',
   smallTotal: 80,
   nameTerm: 'pizza',
   addrTerm: 'hwy',
@@ -156,7 +158,7 @@ export const catalog = [
         query: () => `query Next($county: String, $after: String) {
   facilities(county: $county, first: 3, after: $after) {
     pageInfo { hasNextPage endCursor }
-    nodes { id name lastInspectionDate }
+    nodes { id name county lastInspectionDate }
   }
 }`,
         vars: (c, prev) => ({ county: c.county, after: prev.facilities.pageInfo.endCursor }),
@@ -213,7 +215,7 @@ export const catalog = [
       {
         query: (c) => `{
   first: facilities(county: ${s(c.county)}, first: 1) { totalCount nodes { name } }
-  second: facilities(county: ${s(c.smallCounty)}, first: 1) { totalCount nodes { name } }
+  second: facilities(county: ${s(c.otherCounty)}, first: 1) { totalCount nodes { name } }
 }`,
       },
     ],
@@ -339,10 +341,10 @@ fragment Card on Facility { name city lastInspectionScore lastInspectionDate }`,
     id: 'Q29',
     group: 'Facility and inspections',
     title: 'The deepest allowed query: facility to violation',
-    note: 'Depth 8 is the limit: `facilities > edges > node > inspections > edges > node > violations > code`.',
+    note: 'Depth 8 is the limit: `facilities > edges > node > inspections > edges > node > violations > code`. `minScore: 0` keeps only facilities that have been scored, so each has inspections.',
     steps: [
       {
-        query: (c) => `{ facilities(county: ${s(c.county)}, first: 2) {
+        query: (c) => `{ facilities(county: ${s(c.county)}, minScore: 0, first: 2) {
   edges { node { name inspections(first: 2) { edges { node { inspectionDate violations { code } } } } } }
 } }`,
       },
@@ -465,7 +467,6 @@ fragment Card on Facility { name city lastInspectionScore lastInspectionDate }`,
     group: 'Errors and limits',
     title: 'Search text too long',
     steps: [{ query: () => `{ facilities(q: ${s('a'.repeat(101))}) { totalCount } }` }],
-    readmeQuery: '{ facilities(q: "<101 characters>") { totalCount } }',
   },
   {
     id: 'Q45',
@@ -504,7 +505,10 @@ fragment Card on Facility { name city lastInspectionScore lastInspectionDate }`,
     id: 'Q49',
     group: 'Errors and limits',
     title: 'There are no mutations',
-    note: 'The API is read-only: any mutation is rejected and returns no data.',
-    steps: [{ query: () => 'mutation { anything }' }],
+    note: 'The API is read-only. The schema has no `Mutation` or `Subscription` type (the first request needs introspection), and a mutation is rejected with HTTP 400 and `OPERATION_NOT_SUPPORTED`.',
+    steps: [
+      { query: () => '{ __schema { mutationType { name } subscriptionType { name } } }' },
+      { query: () => 'mutation { anything }' },
+    ],
   },
 ];

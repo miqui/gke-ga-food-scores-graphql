@@ -19,7 +19,7 @@ function renderQuery(entry) {
   if (entry.note) out.push(entry.note, '');
   entry.steps.forEach((step, i) => {
     if (entry.steps.length > 1) out.push(i === 0 ? 'Request 1:' : `Request ${i + 1}:`, '');
-    out.push('```graphql', entry.readmeQuery ?? step.query(SAMPLE_CTX), '```', '');
+    out.push('```graphql', step.query(SAMPLE_CTX), '```', '');
     const vars = step.sampleVars ? step.sampleVars(SAMPLE_CTX) : step.vars ? step.vars(SAMPLE_CTX, undefined) : undefined;
     if (vars !== undefined) out.push('Variables:', '', '```json', JSON.stringify(vars), '```', '');
     if (step.operationName) out.push(`Send \`"operationName": "${step.operationName}"\`.`, '');
@@ -59,10 +59,11 @@ export function render() {
 }
 
 const readme = readFileSync(README, 'utf8');
+const count = (marker) => readme.split(marker).length - 1;
 const a = readme.indexOf(START);
 const b = readme.indexOf(END);
-if (a === -1 || b === -1 || b < a) {
-  console.error(`README.md needs the markers ${START} and ${END}`);
+if (count(START) !== 1 || count(END) !== 1 || b < a) {
+  console.error(`README.md needs exactly one ${START} followed by exactly one ${END} (found ${count(START)} and ${count(END)})`);
   process.exit(2);
 }
 const next = readme.slice(0, a) + render() + readme.slice(b + END.length);

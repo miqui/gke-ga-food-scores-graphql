@@ -231,7 +231,7 @@ Request 2:
 query Next($county: String, $after: String) {
   facilities(county: $county, first: 3, after: $after) {
     pageInfo { hasNextPage endCursor }
-    nodes { id name lastInspectionDate }
+    nodes { id name county lastInspectionDate }
   }
 }
 ```
@@ -412,10 +412,10 @@ Variables:
 
 **Q29. The deepest allowed query: facility to violation**
 
-Depth 8 is the limit: `facilities > edges > node > inspections > edges > node > violations > code`.
+Depth 8 is the limit: `facilities > edges > node > inspections > edges > node > violations > code`. `minScore: 0` keeps only facilities that have been scored, so each has inspections.
 
 ```graphql
-{ facilities(county: "BRYAN", first: 2) {
+{ facilities(county: "BRYAN", minScore: 0, first: 2) {
   edges { node { name inspections(first: 2) { edges { node { inspectionDate violations { code } } } } } }
 } }
 ```
@@ -543,7 +543,7 @@ One run per county per sync, newest first. `limit` is 1-50.
 **Q44. Search text too long**
 
 ```graphql
-{ facilities(q: "<101 characters>") { totalCount } }
+{ facilities(q: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") { totalCount } }
 ```
 
 **Q45. Sync run limit out of range**
@@ -580,7 +580,15 @@ Cost limit 10,000 (`first` multiplies the cost of everything below it). Rejected
 
 **Q49. There are no mutations**
 
-The API is read-only: any mutation is rejected and returns no data.
+The API is read-only. The schema has no `Mutation` or `Subscription` type (the first request needs introspection), and a mutation is rejected with HTTP 400 and `OPERATION_NOT_SUPPORTED`.
+
+Request 1:
+
+```graphql
+{ __schema { mutationType { name } subscriptionType { name } } }
+```
+
+Request 2:
 
 ```graphql
 mutation { anything }

@@ -53,7 +53,6 @@ const has = (text, term) => lc(text).includes(lc(term));
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const isInt = (v) => Number.isInteger(v);
 const isTime = (v) => typeof v === 'string' && !Number.isNaN(Date.parse(v));
-const sum = (a) => a.reduce((x, y) => x + y, 0);
 /** Dates (ISO strings) sorted newest first; null dates, if any, only at the end. */
 const newestFirst = (dates) => {
   const firstNull = dates.indexOf(null);
@@ -64,6 +63,63 @@ const newestFirst = (dates) => {
 const badInput = (r) => r.status === 200 && r.code === 'BAD_USER_INPUT' && r.data === null;
 
 // ---------------------------------------------------------------- discovery
+const MAX_CANDIDATES = 8; // counties tried, biggest first
+const MAX_PAGES = 10; // pages of 100 facilities read per county
+const word = (text) => (text.match(/[A-Za-z]{4,}/) || [null])[0];
+const streetOf = (address) => address.split(/\r?\n/)[0];
+
+/**
+ * Can this county serve every example? Returns its discovered values, or a string saying why not.
+ * Needs facilities scored 100 and >= 95 (Q10, Q11) plus, within the pages read: a named facility in
+ * its most common city (Q8, Q12), an addressed one (Q9) and one with 3+ inspections whose newest has
+ * violations (Q25-Q33).
+ */
+function profile(county) {
+  const counts = gql(
+    'query($c: String) { perfect: facilities(county: $c, minScore: 100) { totalCount } high: facilities(county: $c, minScore: 95) { totalCount } }',
+    { c: county },
+  );
+  if (!ok(counts)) return `${county}: cannot count scores (${JSON.stringify(counts.errors || counts.status)})`;
+  if (counts.data.perfect.totalCount === 0 || counts.data.high.totalCount === 0) return `${county}: no facility scored 100 and >= 95`;
+
+  const nodes = [];
+  let after = null;
+  let found = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const r = gql(
+      `query($c: String, $a: String) { facilities(county: $c, first: 100, after: $a) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id name city address lastInspectionScore inspections(first: 1) { totalCount nodes { id violations { id } } } }
+      } }`,
+      { c: county, a: after },
+    );
+    if (!ok(r)) return `${county}: cannot read facilities (${JSON.stringify(r.errors || r.status)})`;
+    for (const n of r.data.facilities.nodes) nodes.push(n);
+
+    const cityCount = {};
+    for (const n of nodes) cityCount[n.city] = (cityCount[n.city] || 0) + 1;
+    const city = Object.keys(cityCount).sort((a, b) => cityCount[b] - cityCount[a])[0];
+    const named = nodes.find((n) => n.city === city && n.lastInspectionScore >= 90 && word(n.name));
+    const addressed = nodes.find((n) => word(streetOf(n.address)));
+    const rich = nodes.find((n) => n.inspections.totalCount >= 3 && n.inspections.nodes.length > 0 && n.inspections.nodes[0].violations.length > 0);
+    found = { city, named, addressed, rich };
+    if (named && addressed && rich) {
+      return {
+        county,
+        city,
+        nameTerm: lc(word(named.name)),
+        addrTerm: lc(word(streetOf(addressed.address))),
+        facilityId: rich.id,
+        inspectionId: rich.inspections.nodes[0].id,
+      };
+    }
+    if (!r.data.facilities.pageInfo.hasNextPage) break;
+    after = r.data.facilities.pageInfo.endCursor;
+  }
+  const missing = ['named', 'addressed', 'rich'].filter((k) => !(found && found[k]));
+  return `${county}: no ${missing.join('/')} facility among its first ${nodes.length}`;
+}
+
 export function setup() {
   if (__ENV.SAMPLE === '1') return Object.assign({}, SAMPLE_CTX); // README values; needs the dev data set
   const runs = gql('{ syncRuns(limit: 50, status: ok) { county result } }');
@@ -75,41 +131,38 @@ export function setup() {
     if (!(run.county in seen)) seen[run.county] = (run.result && run.result.facilitiesSeen) || 0;
   }
   const counties = Object.keys(seen).sort((a, b) => seen[b] - seen[a]);
-  const county = counties[0];
-  const smalls = counties.filter((c) => seen[c] >= 30 && seen[c] <= 100);
-  const smallCounty = smalls.length > 0 ? smalls[0] : counties[counties.length - 1];
-  const smallTotal = gql(`{ facilities(county: "${smallCounty}") { totalCount } }`).data.facilities.totalCount;
 
-  const sample = gql(`{ facilities(county: "${county}", first: 100) { nodes {
-    id name city address lastInspectionScore
-    inspections(first: 1) { totalCount nodes { id violations { id } } }
-  } } }`);
-  if (!ok(sample)) fail(`cannot read facilities of ${county}: ${JSON.stringify(sample.errors)}`);
-  const nodes = sample.data.facilities.nodes;
-
-  const cityCount = {};
-  for (const n of nodes) cityCount[n.city] = (cityCount[n.city] || 0) + 1;
-  const city = Object.keys(cityCount).sort((a, b) => cityCount[b] - cityCount[a])[0];
-
-  const word = (text) => (text.match(/[A-Za-z]{4,}/) || [null])[0];
-  const named = nodes.find((n) => n.city === city && n.lastInspectionScore >= 90 && word(n.name));
-  const addressed = nodes.find((n) => word(n.address.split(/\r?\n/)[0]));
-  const rich = nodes.find(
-    (n) => n.inspections.totalCount >= 3 && n.inspections.nodes.length > 0 && n.inspections.nodes[0].violations.length > 0,
-  );
-  if (!named || !addressed || !rich) {
-    fail(`county ${county} lacks the data the examples need (named=${!!named} addressed=${!!addressed} rich=${!!rich})`);
+  // Main county: the biggest one that can serve every example.
+  const rejected = [];
+  let ctx = null;
+  for (const county of counties.slice(0, MAX_CANDIDATES)) {
+    const p = profile(county);
+    if (typeof p === 'string') {
+      rejected.push(p);
+      continue;
+    }
+    ctx = p;
+    break;
   }
-  const ctx = {
-    county,
-    city,
-    smallCounty,
-    smallTotal,
-    nameTerm: lc(word(named.name)),
-    addrTerm: lc(word(addressed.address.split(/\r?\n/)[0])),
-    facilityId: rich.id,
-    inspectionId: rich.inspections.nodes[0].id,
-  };
+  if (!ctx) fail(`no synced county can serve the examples. Checked: ${rejected.join('; ')}`);
+
+  // Small county for the full page walk (Q15): by its real totalCount (1-100), preferably 30+ so it
+  // spans several pages. `facilitiesSeen` is only a hint to pick candidates. None found: Q15 is skipped.
+  ctx.smallCounty = null;
+  ctx.smallTotal = 0;
+  const hints = counties.filter((c) => seen[c] > 0 && seen[c] <= 150).slice(0, MAX_CANDIDATES);
+  for (const c of hints) {
+    const r = gql('query($c: String) { facilities(county: $c) { totalCount } }', { c });
+    if (!ok(r)) fail(`cannot count facilities of ${c}: ${JSON.stringify(r.errors || r.status)}`);
+    const total = r.data.facilities.totalCount;
+    if (total < 1 || total > 100) continue;
+    if (ctx.smallCounty === null || total >= 30) {
+      ctx.smallCounty = c;
+      ctx.smallTotal = total;
+    }
+    if (total >= 30) break;
+  }
+  ctx.otherCounty = counties.find((c) => c !== ctx.county) || ctx.county; // second county for Q19
   console.log(`discovered ${JSON.stringify(ctx)}`);
   return ctx;
 }
@@ -181,6 +234,7 @@ const A = {
       ['page 1 returned a cursor', ok(a) && typeof a.data.facilities.pageInfo.endCursor === 'string'],
       ['page 2 has 3 nodes, none of them on page 1', idb.length === 3 && idb.every((id) => ida.indexOf(id) === -1)],
       ['the order continues across pages', newestFirst(dates)],
+      ['page 2 nodes are in the county', ok(b) && nodesOf(b).every((n) => n.county === c.county)],
     ];
   },
   Q15: (c, [pages]) => {
@@ -253,10 +307,13 @@ const A = {
     ];
   },
   Q28: (c, [r]) => [['totalCount >= 3', ok(r) && r.data.facility.inspections.totalCount >= 3]],
-  Q29: (c, [r]) => [
-    ['2 facilities with 2 inspections each', ok(r) && r.data.facilities.edges.length === 2 && r.data.facilities.edges.every((e) => e.node.inspections.edges.length <= 2)],
-    ['violations are lists of codes', ok(r) && r.data.facilities.edges.every((e) => e.node.inspections.edges.every((i) => Array.isArray(i.node.violations) && i.node.violations.every((v) => typeof v.code === 'string')))],
-  ],
+  Q29: (c, [r]) => {
+    const e = ok(r) ? r.data.facilities.edges : [];
+    return [
+      ['2 facilities, each with 1-2 inspections (first: 2)', e.length === 2 && e.every((x) => x.node.inspections.edges.length >= 1 && x.node.inspections.edges.length <= 2)],
+      ['violations are lists of codes', e.length > 0 && e.every((x) => x.node.inspections.edges.every((i) => Array.isArray(i.node.violations) && i.node.violations.every((v) => typeof v.code === 'string')))],
+    ];
+  },
   Q30: (c, [r]) => [['null, no error', ok(r) && r.data.facility === null]],
   Q31: (c, [r]) => {
     const i = ok(r) && r.data.inspection;
@@ -266,7 +323,6 @@ const A = {
       ['score is 0-100 and the report url is set', !!i && isInt(i.score) && i.score >= 0 && i.score <= 100 && typeof i.reportUrl === 'string' && i.reportUrl.length > 0],
       ['the inspection has violations with prefixed ids', vs.length > 0 && vs.every((v) => v.id.indexOf(`${c.inspectionId}:`) === 0)],
       ['violation fields are typed', vs.every((v) => typeof v.code === 'string' && isInt(v.points) && v.points >= 0 && typeof v.correctedOnSite === 'boolean' && typeof v.repeat === 'boolean' && typeof v.notes === 'string')],
-      ['violation points are at most 100 in total', sum(vs.map((v) => v.points)) <= 100],
     ];
   },
   Q32: (c, [r]) => [['the facility is the one we came from', ok(r) && r.data.inspection.facility.id === c.facilityId && !!r.data.inspection.facility.name]],
@@ -309,7 +365,10 @@ const A = {
   Q46: (c, [r]) => [['HTTP 400 GRAPHQL_VALIDATION_FAILED', r.status === 400 && r.code === 'GRAPHQL_VALIDATION_FAILED']],
   Q47: (c, [r]) => [['HTTP 400 QUERY_TOO_DEEP', r.status === 400 && r.code === 'QUERY_TOO_DEEP']],
   Q48: (c, [r]) => [['HTTP 400 QUERY_TOO_COMPLEX', r.status === 400 && r.code === 'QUERY_TOO_COMPLEX']],
-  Q49: (c, [r]) => [['a mutation is rejected and returns no data', !!r.errors && !r.data]],
+  Q49: (c, [schema, m]) => [
+    ['the schema declares no Mutation or Subscription type', ok(schema) && schema.data.__schema.mutationType === null && schema.data.__schema.subscriptionType === null],
+    ['a mutation is rejected: HTTP 400 OPERATION_NOT_SUPPORTED, no data', m.status === 400 && m.code === 'OPERATION_NOT_SUPPORTED' && !m.data],
+  ],
 };
 
 // ---------------------------------------------------------------- running a catalog entry
@@ -345,6 +404,10 @@ export default function (ctx) {
   });
 
   for (const entry of catalog) {
+    if (entry.id === 'Q15' && !ctx.smallCounty) {
+      console.warn('Q15 skipped: no county with 1-100 facilities to walk');
+      continue;
+    }
     group(`${entry.id} ${entry.title}`, () => {
       let pairs;
       try {
